@@ -1,0 +1,27 @@
+{
+    "m3u": "/path_to_m3u",
+    "cache_file": "/home/cache.json",
+    "log_file": "/home/logs/M3UtoStrm.log",
+    "output_dir": "/media/m3u2strm",
+    "tmdb_api": "TMDB_KEY_HERE",
+    "existing_media_dir": "/media/Existing",
+    "existing_media_cache_file": "/home/existing_media_cache.json",
+    "tv_group_keywords": [
+        "ser",
+        "Series"
+    ],
+    "doc_group_keywords": [
+        "doc"
+    ],
+    "movie_group_keywords": [
+        "vod",
+        "movies"
+    ],
+    "movies_existing_dir": "/media/Existing/Movies",
+    "tv_existing_dir": "/media/Existing/TV Shows",
+    "docs_existing_dir": "/media/Existing/Documentary",
+    "animation_existing_dir": "/media/Existing/Animation",
+    "standup_existing_dir": "/media/Existing/StandUp",
+    "dry_run": false,
+    "max_workers": 5
+}
