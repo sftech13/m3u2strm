@@ -297,8 +297,6 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
                 logging.debug(f"Skipping TV entry without valid pattern: {title}")
                 continue
             show_name, season, episode_str = details
-            target_folder = os.path.join(tvshows_dir, show_name, season)
-            os.makedirs(target_folder, exist_ok=True)
             base_filename = episode_str
             parsed = parse_tv_filename(base_filename)
             if parsed is None or None in parsed:
@@ -309,35 +307,37 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
             if normalized_str in existing_media:
                 logging.debug(f"TV episode already exists for '{base_filename}'. Skipping .strm creation.")
                 continue
+            target_folder = os.path.join(tvshows_dir, show_name, season)
+            os.makedirs(target_folder, exist_ok=True)
             strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         elif category == "documentary":
             doc_name, year = extract_movie_details(title)
-            target_folder = os.path.join(docs_dir, f"{doc_name} ({year})" if year else doc_name)
-            os.makedirs(target_folder, exist_ok=True)
             base_filename = f"{doc_name} ({year})" if year else doc_name
             if base_filename.lower() in existing_media:
-                logging.debug(f"Documentary '{base_filename}' exists. Skipping .strm creation.")
+                logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
                 continue
+            target_folder = os.path.join(docs_dir, f"{doc_name} ({year})" if year else doc_name)
+            os.makedirs(target_folder, exist_ok=True)
             strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         else:
             movie_name, year = extract_movie_details(title)
             genres = get_movie_genres(movie_name, year)
             if "Documentary" in genres:
                 category = "documentary"
+                base_filename = f"{movie_name} ({year})" if year else movie_name
+                if base_filename.lower() in existing_media:
+                    logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
+                    continue
                 target_folder = os.path.join(docs_dir, f"{movie_name} ({year})" if year else movie_name)
                 os.makedirs(target_folder, exist_ok=True)
-                base_filename = f"{movie_name} ({year})" if year else movie_name
-                if base_filename.lower() in existing_media:
-                    logging.debug(f"Documentary '{base_filename}' exists. Skipping .strm creation.")
-                    continue
                 strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
             else:
-                target_folder = os.path.join(movies_dir, f"{movie_name} ({year})" if year else movie_name)
-                os.makedirs(target_folder, exist_ok=True)
                 base_filename = f"{movie_name} ({year})" if year else movie_name
                 if base_filename.lower() in existing_media:
-                    logging.debug(f"Movie '{base_filename}' exists. Skipping .strm creation.")
+                    logging.debug(f"Movie '{base_filename}' already exists. Skipping .strm creation.")
                     continue
+                target_folder = os.path.join(movies_dir, f"{movie_name} ({year})" if year else movie_name)
+                os.makedirs(target_folder, exist_ok=True)
                 strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         if base_filename.lower() in existing_media:
             logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
