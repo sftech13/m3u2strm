@@ -39,7 +39,7 @@ os.makedirs(MOVIES_DIR, exist_ok=True)
 os.makedirs(TVSHOWS_DIR, exist_ok=True)
 os.makedirs(DOCS_DIR, exist_ok=True)
 
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO, 
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
@@ -78,11 +78,11 @@ def sanitize_title(title):
 tv_pattern = re.compile(
     r"(?i)(\s+(S|Season|Sezon|Serie|Series|Seazon|シーズン|시즌)\s?\d{1,4}[\s._-]*(?:E|Episode|ep|e|エピソード|에피소드|화|話)[\s]*?(\d{1,4}))"
     r"|(?:^|\s)S(?P<season>\d{1,2})\s*E(?P<episode>\d{1,2})"
-    r"|(?:Episode[\s._-]*(?P<episodeOnly>\d{1,4}))"
-    r"|(?:エピソード[\s._-]*(?P<episodeOnly>\d{1,4}))"
-    r"|(?:에피소드[\s._-]*(?P<episodeOnly>\d{1,4}))"
-    r"|(?:화[\s._-]*(?P<episodeOnly>\d{1,4}))"
-    r"|(?:話[\s._-]*(?P<episodeOnly>\d{1,4}))"
+    r"|(?:Episode[\s._-]*(\d{1,4}))"
+    r"|(?:エピソード[\s._-]*(\d{1,4}))"
+    r"|(?:에피소드[\s._-]*(\d{1,4}))"
+    r"|(?:화[\s._-]*(\d{1,4}))"
+    r"|(?:話[\s._-]*(\d{1,4}))"
     r"|(?P<seasonOnly>\d{1,2})\s*-\s*(?:Episode|エピソード|에피소드|화|話)\s*(?P<ep>\d{1,4})",
     re.IGNORECASE
 )
@@ -103,8 +103,6 @@ def parse_tv_filename(filename):
     elif match.group(2) and match.group(3):
         season_num = match.group(2)
         episode_num = match.group(3)
-    elif d.get("episodeOnly"):
-        return None, None, None
     else:
         return None, None, None
     cleaned_name = tv_pattern.sub(" ", filename).strip()
@@ -162,8 +160,7 @@ def extract_movie_details(title):
 
 def extract_tv_details(title):
     title = re.sub(r"\(\d{4}\)", "", title).strip()
-    regex = tv_pattern
-    match = regex.search(title)
+    match = tv_pattern.search(title)
     if not match:
         logging.debug(f"No valid TV pattern found in title: {title}, skipping.")
         return None, None, None
@@ -179,7 +176,7 @@ def extract_tv_details(title):
         episode_num = match.group(3)
     else:
         return None, None, None
-    cleaned = regex.sub(" ", title).strip()
+    cleaned = tv_pattern.sub(" ", title).strip()
     show_folder_name = sanitize_title(cleaned).lower()
     season_folder_name = f"Season {season_num}"
     episode_str = f"{show_folder_name} S{season_num}E{episode_num}"
@@ -297,7 +294,7 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
         if category == "tvshow":
             details = extract_tv_details(title)
             if not details or details[0] is None:
-                logging.debug(f"Skipping TV entry without valid SxxExx pattern: {title}")
+                logging.debug(f"Skipping TV entry without valid pattern: {title}")
                 continue
             show_name, season, episode_str = details
             target_folder = os.path.join(tvshows_dir, show_name, season)
@@ -319,7 +316,7 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
             os.makedirs(target_folder, exist_ok=True)
             base_filename = f"{doc_name} ({year})" if year else doc_name
             if base_filename.lower() in existing_media:
-                logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
+                logging.debug(f"Documentary '{base_filename}' exists. Skipping .strm creation.")
                 continue
             strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         else:
@@ -331,7 +328,7 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
                 os.makedirs(target_folder, exist_ok=True)
                 base_filename = f"{movie_name} ({year})" if year else movie_name
                 if base_filename.lower() in existing_media:
-                    logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
+                    logging.debug(f"Documentary '{base_filename}' exists. Skipping .strm creation.")
                     continue
                 strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
             else:
@@ -339,11 +336,11 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
                 os.makedirs(target_folder, exist_ok=True)
                 base_filename = f"{movie_name} ({year})" if year else movie_name
                 if base_filename.lower() in existing_media:
-                    logging.debug(f"Movie '{base_filename}' already exists. Skipping .strm creation.")
+                    logging.debug(f"Movie '{base_filename}' exists. Skipping .strm creation.")
                     continue
                 strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         if base_filename.lower() in existing_media:
-            logging.debug(f"Media file exists for '{base_filename}' (found in existing media cache). Skipping .strm creation.")
+            logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
             continue
         if DRY_RUN:
             logging.info(f"[DRY RUN] Would create: {strm_file_path} with URL: {url}")
