@@ -84,7 +84,8 @@ def sanitize_title(title):
 
 def parse_tv_filename(filename):
     cleaned = re.sub(r"(\[.*?\]|\{.*?\}|\(\d{4}\))", "", filename)
-    match = re.search(r"[Ss](?:eason\s*)?(\d+)[Ee](\d+)", cleaned, re.IGNORECASE)
+    match = re.search(r"[Ss](?:eason\s*)?(\d+)\s*[Ee]\s*(\d+)", cleaned, re.IGNORECASE)
+    #r"[Ss](?:eason\s*)?(\d+)[Ee](\d+)",
     if not match:
         logging.debug(f"Failed to parse SxxExx from filename: {filename}")
         return None, None, None
@@ -108,41 +109,36 @@ def parse_tv_m3u_entry(title):
         return None, None, None, None
     return show_name, season_num, episode_num, title
 
-
 def parse_m3u(m3u_file):
     vod_entries = []
     seen_titles = set()
+    group_pattern = re.compile(r'group-title="([^"]*)",(.*)')
     try:
         with open(m3u_file, "r", encoding="utf-8") as file:
-            lines = file.readlines()
-        logging.debug(f"Read {len(lines)} lines from M3U file: {m3u_file}")
+            lines = file  # iterate line-by-line
+            for line in lines:
+                if line.startswith("#EXTINF"):
+                    match = group_pattern.search(line)
+                    if match:
+                        group = match.group(1).strip().lower()
+                        raw_title = match.group(2).strip()
+                        raw_title = strip_after_year(raw_title)
+                        title = sanitize_title(raw_title)
+                        if any(keyword in group for keyword in TV_GROUP_KEYWORDS):
+                            category = "tvshow"
+                        elif any(keyword in group for keyword in DOC_GROUP_KEYWORDS):
+                            category = "documentary"
+                        elif any(keyword in group for keyword in MOVIE_GROUP_KEYWORDS):
+                            category = "movie"
+                        else:
+                            category = "movie"
+                        url = next(lines, "").strip()
+                        if url and title not in seen_titles:
+                            seen_titles.add(title)
+                            vod_entries.append({"title": title, "url": url, "category": category})
+        logging.info(f"Parsed {len(vod_entries)} entries from M3U file: {m3u_file}")
     except Exception as e:
         logging.error(f"Failed to read M3U file: {e}")
-        return []
-    for i in range(len(lines)):
-        if lines[i].startswith("#EXTINF"):
-            match = re.search(r'group-title="([^"]*)",(.*)', lines[i])
-            if match:
-                group = match.group(1).strip().lower()
-                raw_title = match.group(2).strip()
-                raw_title = strip_after_year(raw_title)
-                title = sanitize_title(raw_title)
-                if any(keyword in group for keyword in TV_GROUP_KEYWORDS):
-                    category = "tvshow"
-                elif any(keyword in group for keyword in DOC_GROUP_KEYWORDS):
-                    category = "documentary"
-                elif any(keyword in group for keyword in MOVIE_GROUP_KEYWORDS):
-                    category = "movie"
-                else:
-                    category = "movie"
-                url = lines[i + 1].strip() if i + 1 < len(lines) else ""
-                if url and title not in seen_titles:
-                    seen_titles.add(title)
-                    vod_entries.append(
-                        {"title": title, "url": url, "category": category}
-                    )
-                    logging.debug(f"Added entry: {title} ({category})")
-    logging.info(f"Parsed {len(vod_entries)} entries from M3U file: {m3u_file}")
     return vod_entries
 
 
@@ -155,7 +151,8 @@ def extract_movie_details(title):
 
 def extract_tv_details(title):
     title = re.sub(r"\(\d{4}\)", "", title).strip()
-    match = re.search(r"[Ss](?:eason\s*)?(\d+)[Ee](\d+)", title, re.IGNORECASE)
+    match = re.search(r"[Ss](?:eason\s*)?(\d+)\s*[Ee]\s*(\d+)", title, re.IGNORECASE)
+    #"[Ss](?:eason\s*)?(\d+)[Ee](\d+)"
     if not match:
         logging.debug(f"No valid SxxExx found in TV title: {title}, skipping.")
         return None, None, None
@@ -290,7 +287,7 @@ def create_strm_files(
         if category == "tvshow":
             details = extract_tv_details(title)
             if not details or details[0] is None:
-                logging.info(f"Skipping TV entry without valid SxxExx pattern: {title}")
+                logging.debug(f"Skipping TV entry without valid SxxExx pattern: {title}")
                 continue
             show_name, season, episode_str = details
             target_folder = os.path.join(tvshows_dir, show_name, season)
@@ -298,14 +295,14 @@ def create_strm_files(
             base_filename = episode_str
             parsed = parse_tv_filename(base_filename)
             if parsed is None or None in parsed:
-                logging.info(
+                logging.debug(
                     f"Skipping TV entry (unable to parse base filename): {title}"
                 )
                 continue
             normalized_tuple = (parsed[0], parsed[1], parsed[2])
             normalized_str = " ".join(tuple(str(x) for x in normalized_tuple))
             if normalized_str in existing_media:
-                logging.info(
+                logging.debug(
                     f"TV episode already exists for '{base_filename}'. Skipping .strm creation."
                 )
                 continue
@@ -318,7 +315,7 @@ def create_strm_files(
             os.makedirs(target_folder, exist_ok=True)
             base_filename = f"{doc_name} ({year})" if year else doc_name
             if base_filename.lower() in existing_media:
-                logging.info(
+                logging.debug(
                     f"Documentary '{base_filename}' already exists. Skipping .strm creation."
                 )
                 continue
@@ -334,7 +331,7 @@ def create_strm_files(
                 os.makedirs(target_folder, exist_ok=True)
                 base_filename = f"{movie_name} ({year})" if year else movie_name
                 if base_filename.lower() in existing_media:
-                    logging.info(
+                    logging.debug(
                         f"Documentary '{base_filename}' already exists. Skipping .strm creation."
                     )
                     continue
@@ -346,13 +343,13 @@ def create_strm_files(
                 os.makedirs(target_folder, exist_ok=True)
                 base_filename = f"{movie_name} ({year})" if year else movie_name
                 if base_filename.lower() in existing_media:
-                    logging.info(
+                    logging.debug(
                         f"Movie '{base_filename}' already exists. Skipping .strm creation."
                     )
                     continue
                 strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         if base_filename.lower() in existing_media:
-            logging.info(
+            logging.debug(
                 f"Media file exists for '{base_filename}' (found in existing media cache). Skipping .strm creation."
             )
             continue
@@ -362,7 +359,7 @@ def create_strm_files(
             try:
                 with open(strm_file_path, "w", encoding="utf-8") as strm_file:
                     strm_file.write(url + "\n")
-                logging.info(f"Created: {strm_file_path}")
+                logging.debug(f"Created: {strm_file_path}")
                 cache[title] = url
             except Exception as e:
                 logging.error(f"Failed to create {strm_file_path}: {e}")
