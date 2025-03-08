@@ -76,16 +76,16 @@ def sanitize_title(title):
 
 # New robust TV season/episode pattern Thx @mickle026
 tv_pattern = re.compile(
-    r"(?i)(\s+(S|Season|Sezon|Serie|Series|Seazon|シーズン|시즌)\s?\d{1,4}[\s._-]*(?:E|Episode|ep|e|エピソード|에피소드|화|話)[\s]*?(\d{1,4}))"
-    r"|(?:^|\s)S(?P<season>\d{1,2})\s*E(?P<episode>\d{1,2})"
-    r"|(?:Episode[\s._-]*(\d{1,4}))"
-    r"|(?:エピソード[\s._-]*(\d{1,4}))"
-    r"|(?:에피소드[\s._-]*(\d{1,4}))"
-    r"|(?:화[\s._-]*(\d{1,4}))"
-    r"|(?:話[\s._-]*(\d{1,4}))"
-    r"|(?P<seasonOnly>\d{1,2})\s*-\s*(?:Episode|エピソード|에피소드|화|話)\s*(?P<ep>\d{1,4})",
+    r"(?i)(?<!\b\d{2}[\./-]\d{2}[\./-]\d{4})(?<!\(\d{4}-\d{4}\))"
+    r"(?:S|Season|Sezon|Serie|Series|Seazon|シーズン|시즌)?[\s]*?(\d{1,4})[\s._-]*(?:E|Episode|ep|e|\.|[\s._-]|エピソード|에피소드|화|話)[\s]*?(\d{1,4})"
+    r"|(?:E|Episode|ep|e|エピソード|에피소드|화|話)\.?(\d{1,4})(?:-\d{1,4})?"
+    r"|(\d{1,4})\s*-\s*Episode\s*(\d{1,4})"
+    r"|Episode\s*(\d{1,4})\s*-\s*"
+    r"|(?:S|Season|Sezon|Serie|Seazon|シーズン|시즌)\s?\d{1,4}\s?E\s?\d{1,4}"
+    r"|(?:シーズン|시즌)\s*(\d{1,4})[\s._-]*(?:エピソード|에피소드|화|話)[\s]*?(\d{1,4})",
     re.IGNORECASE
 )
+
 
 def parse_tv_filename(filename):
     cleaned = re.sub(r"(\[.*?\]|\{.*?\}|\(\d{4}\))", "", filename)
