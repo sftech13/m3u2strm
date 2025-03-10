@@ -24,11 +24,6 @@ EXISTING_MEDIA_CACHE_FILE = config["existing_media_cache_file"]
 TV_GROUP_KEYWORDS = config["tv_group_keywords"]
 DOC_GROUP_KEYWORDS = config["doc_group_keywords"]
 MOVIE_GROUP_KEYWORDS = config["movie_group_keywords"]
-MOVIES_EXISTING_DIR = config.get("movies_existing_dir", EXISTING_MEDIA_DIR)
-TV_EXISTING_DIR = config.get("tv_existing_dir", EXISTING_MEDIA_DIR)
-DOCS_EXISTING_DIR = config.get("docs_existing_dir", EXISTING_MEDIA_DIR)
-ANIMATION_EXISTING_DIR = config.get("animation_existing_dir", EXISTING_MEDIA_DIR)
-STANDUP_EXISTING_DIR = config.get("standup_existing_dir", EXISTING_MEDIA_DIR)
 DRY_RUN = config.get("dry_run", False)
 MAX_WORKERS = config.get("max_workers", 5)
 
@@ -74,18 +69,8 @@ def sanitize_title(title):
     title = re.sub(r"\s+", " ", title).strip()
     return title
 
-# New robust TV season/episode pattern Thx @mickle026
-tv_pattern = re.compile(
-    r"(?i)(?<!\b\d{2}[\./-]\d{2}[\./-]\d{4})(?<!\(\d{4}-\d{4}\))"
-    r"(?:S|Season|Sezon|Serie|Series|Seazon|シーズン|시즌)?[\s]*?(\d{1,4})[\s._-]*(?:E|Episode|ep|e|\.|[\s._-]|エピソード|에피소드|화|話)[\s]*?(\d{1,4})"
-    r"|(?:E|Episode|ep|e|エピソード|에피소드|화|話)\.?(\d{1,4})(?:-\d{1,4})?"
-    r"|(\d{1,4})\s*-\s*Episode\s*(\d{1,4})"
-    r"|Episode\s*(\d{1,4})\s*-\s*"
-    r"|(?:S|Season|Sezon|Serie|Seazon|シーズン|시즌)\s?\d{1,4}\s?E\s?\d{1,4}"
-    r"|(?:シーズン|시즌)\s*(\d{1,4})[\s._-]*(?:エピソード|에피소드|화|話)[\s]*?(\d{1,4})",
-    re.IGNORECASE
-)
-
+# Updated patteren for Alaska: gli alieni sono tra noi S01 E05
+tv_pattern = re.compile(r"(?i)S(?:eason)?\s*(\d{1,4})\s*E(?:pisode)?\s*(\d{1,4})")
 
 def parse_tv_filename(filename):
     cleaned = re.sub(r"(\[.*?\]|\{.*?\}|\(\d{4}\))", "", filename)
@@ -93,22 +78,27 @@ def parse_tv_filename(filename):
     if not match:
         logging.debug(f"Failed to parse TV pattern from filename: {filename}")
         return None, None, None
-    d = match.groupdict()
-    if d.get("season") and d.get("episode"):
-        season_num = d["season"]
-        episode_num = d["episode"]
-    elif d.get("seasonOnly") and d.get("ep"):
-        season_num = d["seasonOnly"]
-        episode_num = d["ep"]
-    elif match.group(2) and match.group(3):
-        season_num = match.group(2)
-        episode_num = match.group(3)
-    else:
-        return None, None, None
-    cleaned_name = tv_pattern.sub(" ", filename).strip()
-    show_name = sanitize_title(cleaned_name).lower()
+    season_num, episode_num = match.groups()
+    cleaned = tv_pattern.sub(" ", cleaned).strip()
+    core = cleaned.split("-")[0] if "-" in cleaned else cleaned
+    show_name = re.sub(r"[^\w\s-]", "", core)
+    show_name = re.sub(r"\s+", " ", show_name).strip().lower()
     logging.debug(f"Parsed TV filename '{filename}' as: show_name='{show_name}', season={season_num}, episode={episode_num}")
     return show_name, season_num, episode_num
+
+def extract_tv_details(title):
+    title = re.sub(r"\(\d{4}\)", "", title).strip()
+    match = tv_pattern.search(title)
+    if not match:
+        logging.debug(f"No valid TV pattern found in title: {title}, skipping.")
+        return None, None, None
+    season_num, episode_num = match.groups()
+    title = tv_pattern.sub(" ", title).strip()
+    show_folder_name = sanitize_title(title).lower()
+    season_folder_name = f"Season {season_num}"
+    episode_str = f"{show_folder_name} S{season_num}E{episode_num}"
+    logging.debug(f"Extracted TV details: {show_folder_name}, {season_folder_name}, {episode_str}")
+    return show_folder_name, season_folder_name, episode_str
 
 def parse_tv_m3u_entry(title):
     show_name, season_num, episode_num = parse_tv_filename(title)
@@ -158,31 +148,6 @@ def extract_movie_details(title):
         return sanitize_title(match.group(1)), match.group(2)
     return sanitize_title(title), None
 
-def extract_tv_details(title):
-    title = re.sub(r"\(\d{4}\)", "", title).strip()
-    match = tv_pattern.search(title)
-    if not match:
-        logging.debug(f"No valid TV pattern found in title: {title}, skipping.")
-        return None, None, None
-    d = match.groupdict()
-    if d.get("season") and d.get("episode"):
-        season_num = d["season"]
-        episode_num = d["episode"]
-    elif d.get("seasonOnly") and d.get("ep"):
-        season_num = d["seasonOnly"]
-        episode_num = d["ep"]
-    elif match.group(2) and match.group(3):
-        season_num = match.group(2)
-        episode_num = match.group(3)
-    else:
-        return None, None, None
-    cleaned = tv_pattern.sub(" ", title).strip()
-    show_folder_name = sanitize_title(cleaned).lower()
-    season_folder_name = f"Season {season_num}"
-    episode_str = f"{show_folder_name} S{season_num}E{episode_num}"
-    logging.debug(f"Extracted TV details: {show_folder_name}, {season_folder_name}, {episode_str}")
-    return show_folder_name, season_folder_name, episode_str
-
 async def get_movie_genres_async(session, title, year=None):
     params = {"api_key": TMDB_API, "query": title}
     if year:
@@ -214,7 +179,7 @@ def get_movie_genres(title, year=None):
             return await get_movie_genres_async(session, title, year)
     return asyncio.run(wrapper())
 
-def build_existing_media_cache(directory, parser):
+def build_existing_media_cache(directory):
     existing_files = set()
     if not os.path.exists(directory):
         logging.warning(f"Directory {directory} does not exist; skipping this category.")
@@ -232,7 +197,10 @@ def build_existing_media_cache(directory, parser):
             for file in files:
                 name, ext = os.path.splitext(file)
                 if ext.lower() in video_extensions:
-                    parsed_val = parser(name)
+                    if "tv shows" in root.lower():
+                        parsed_val = parse_tv_filename(name)
+                    else:
+                        parsed_val = sanitize_title(strip_after_year(name)).lower()
                     if parsed_val is not None:
                         if isinstance(parsed_val, tuple):
                             if None in parsed_val:
@@ -242,32 +210,13 @@ def build_existing_media_cache(directory, parser):
                         else:
                             normalized = parsed_val
                         existing_files.add(normalized.lower())
-                        logging.debug(f"Found file in {directory}: {normalized.lower()}")
+                        logging.debug(f"Found file in {root}: {normalized.lower()}")
                     pbar.update(1)
     logging.info(f"Built cache with {len(existing_files)} entries from {directory}")
     return existing_files
 
-def tv_parser(filename):
-    return parse_tv_filename(filename)
-
-def generic_parser(filename):
-    return sanitize_title(strip_after_year(filename)).lower()
-
-def build_all_caches(directories):
-    caches = {}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_cat = {}
-        for cat, path in directories.items():
-            parser = tv_parser if cat in ["tv", "animation"] else generic_parser
-            future = executor.submit(build_existing_media_cache, path, parser)
-            future_to_cat[future] = cat
-        for future in as_completed(future_to_cat):
-            cat = future_to_cat[future]
-            try:
-                caches[cat] = future.result()
-            except Exception as exc:
-                logging.error(f"Error building cache for {cat}: {exc}")
-    return caches
+def build_all_caches(directory):
+    return build_existing_media_cache(directory)
 
 def load_existing_media_cache():
     if os.path.exists(EXISTING_MEDIA_CACHE_FILE):
@@ -356,20 +305,7 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
 def main():
     logging.info("Starting M3U to STRM conversion for Movies, TV Shows, and Documentaries...")
     cache = load_cache()
-    directories = {
-        "movies": MOVIES_EXISTING_DIR,
-        "tv": TV_EXISTING_DIR,
-        "docs": DOCS_EXISTING_DIR,
-        "animation": ANIMATION_EXISTING_DIR,
-        "standup": STANDUP_EXISTING_DIR,
-    }
-    caches = build_all_caches(directories)
-    combined_existing = set()
-    combined_existing.update(caches.get("movies", set()))
-    combined_existing.update(caches.get("docs", set()))
-    combined_existing.update(caches.get("animation", set()))
-    combined_existing.update(caches.get("standup", set()))
-    combined_existing.update(caches.get("tv", set()))
+    combined_existing = build_all_caches(EXISTING_MEDIA_DIR)
     existing_media = load_existing_media_cache()
     if not existing_media:
         existing_media = combined_existing
@@ -385,3 +321,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

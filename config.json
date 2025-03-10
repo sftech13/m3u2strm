@@ -17,11 +17,6 @@
         "vod",
         "movies"
     ],
-    "movies_existing_dir": "/media/Existing/Movies",
-    "tv_existing_dir": "/media/Existing/TV Shows",
-    "docs_existing_dir": "/media/Existing/Documentary",
-    "animation_existing_dir": "/media/Existing/Animation",
-    "standup_existing_dir": "/media/Existing/StandUp",
     "dry_run": false,
     "max_workers": 5
 }
