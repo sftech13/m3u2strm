@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 import aiofiles
 import platform
+import unicodedata
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -69,12 +70,15 @@ def strip_after_year(text):
 def remove_imdb_id(title):
     return re.sub(r"[\{\(]?\btt\d+\b[\}\)]?", "", title, flags=re.IGNORECASE)
 
+
 def sanitize_title(title):
     title = title.strip()
+    title = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').decode('ascii')
     title = remove_imdb_id(title)
     title = re.sub(r"[^\w\s\(\)-]", "", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title
+
 
 # Updated pattern for TV shows: gli alieni sono tra noi S01 E05
 tv_pattern = re.compile(r"(?i)S(?:eason)?\s*(\d{1,4})\s*E(?:pisode)?\s*(\d{1,4})")
