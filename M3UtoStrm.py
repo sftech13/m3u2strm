@@ -33,7 +33,7 @@ TV_GROUP_KEYWORDS = config["tv_group_keywords"]
 DOC_GROUP_KEYWORDS = config["doc_group_keywords"]
 MOVIE_GROUP_KEYWORDS = config["movie_group_keywords"]
 DRY_RUN = config.get("dry_run", False)
-MAX_WORKERS = config.get("max_workers", 5)
+#MAX_WORKERS = config.get("max_workers", 5)
 
 MOVIES_DIR = os.path.join(OUTPUT_DIR, "Movies")
 TVSHOWS_DIR = os.path.join(OUTPUT_DIR, "TV Shows")
@@ -105,7 +105,7 @@ def extract_tv_details(title):
         return None, None, None
     season_num, episode_num = match.groups()
     title = tv_pattern.sub(" ", title).strip()
-    show_folder_name = sanitize_title(title).lower()
+    show_folder_name = sanitize_title(title)
     season_folder_name = f"Season {season_num}"
     episode_str = f"{show_folder_name} S{season_num}E{episode_num}"
     logging.debug(f"Extracted TV details: {show_folder_name}, {season_folder_name}, {episode_str}")
