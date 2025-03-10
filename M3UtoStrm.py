@@ -34,7 +34,7 @@ os.makedirs(MOVIES_DIR, exist_ok=True)
 os.makedirs(TVSHOWS_DIR, exist_ok=True)
 os.makedirs(DOCS_DIR, exist_ok=True)
 
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
+logging.basicConfig(filename=LOG_FILE, level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
