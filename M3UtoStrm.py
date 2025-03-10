@@ -254,10 +254,27 @@ def get_recommended_max_workers():
     logging.info(f"System architecture: {arch}, CPU cores: {cpu_count}, Memory: {total_mem_gb:.2f}GB, recommended parallel writes: {recommended}")
     return recommended
 
+def should_ignore_title(title, ignore_list):
+    title_lower = title.lower()
+    for keyword in ignore_list:
+        if keyword.lower() in title_lower:
+            logging.debug(f"Ignoring title '{title}' due to ignore keyword '{keyword}'")
+            return True
+    return False
+
 def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_RUN):
     title = entry["title"]
     url = entry["url"]
     category = entry["category"]
+
+    if category == "tvshow":
+        ignore_list = config.get("ignore_keywords", {}).get("tvshows", [])
+    else:
+        ignore_list = config.get("ignore_keywords", {}).get("movies", [])
+    
+    if should_ignore_title(title, ignore_list):
+        logging.info(f"Skipping '{title}' due to ignore keywords")
+        return None
 
     if title in existing_media:
         logging.debug(f"Skipping (exists): {title}")
@@ -311,9 +328,11 @@ def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_
             target_folder = os.path.join(movies_dir, f"{movie_name} ({year})" if year else movie_name)
             os.makedirs(target_folder, exist_ok=True)
             strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
+            
     if base_filename.lower() in existing_media:
         logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
         return None
+
     if DRY_RUN:
         logging.info(f"[DRY RUN] Would create: {strm_file_path} with URL: {url}")
         return (title, url)

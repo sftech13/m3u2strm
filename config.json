@@ -6,6 +6,8 @@
     "tmdb_api": "TMDB_KEY_HERE",
     "existing_media_dir": "/media/Existing",
     "existing_media_cache_file": "/home/existing_media_cache.json",
+    "dry_run": false,
+    "max_workers": 16,
     "tv_group_keywords": [
         "ser",
         "Series"
@@ -17,6 +19,13 @@
         "vod",
         "movies"
     ],
-    "dry_run": false,
-    "max_workers": 16
+    "ignore_keywords": {
+        "tvshows": [
+            "ufc"
+        ],
+        "movies": [
+            "ufc",
+            "Pokemon"
+        ]
+    }
 }
