@@ -233,7 +233,7 @@ def save_existing_media_cache(existing_files):
     logging.debug(f"Saved existing media cache with {len(existing_files)} entries")
 
 def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, existing_media):
-    for entry in vod_entries:
+    for entry in tqdm(vod_entries, desc="Creating STRM files", unit="entry"):
         title = entry["title"]
         url = entry["url"]
         category = entry["category"]
@@ -297,7 +297,7 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
             try:
                 with open(strm_file_path, "w", encoding="utf-8") as strm_file:
                     strm_file.write(url + "\n")
-                logging.info(f"Created: {strm_file_path}")
+                logging.debug(f"Created: {strm_file_path}")
                 cache[title] = url
             except Exception as e:
                 logging.error(f"Failed to create {strm_file_path}: {e}")
@@ -321,4 +321,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
