@@ -6,8 +6,15 @@ import requests
 import asyncio
 import aiohttp
 import aiofiles
+import platform
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Try to import psutil to get memory information; fallback if not available.
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 def load_config(config_file="config.json"):
     with open(config_file, "r", encoding="utf-8") as file:
@@ -34,7 +41,7 @@ os.makedirs(MOVIES_DIR, exist_ok=True)
 os.makedirs(TVSHOWS_DIR, exist_ok=True)
 os.makedirs(DOCS_DIR, exist_ok=True)
 
-logging.basicConfig(filename=LOG_FILE, level=logging.WARNING,
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
@@ -69,7 +76,7 @@ def sanitize_title(title):
     title = re.sub(r"\s+", " ", title).strip()
     return title
 
-# Updated patteren for Alaska: gli alieni sono tra noi S01 E05
+# Updated pattern for TV shows: gli alieni sono tra noi S01 E05
 tv_pattern = re.compile(r"(?i)S(?:eason)?\s*(\d{1,4})\s*E(?:pisode)?\s*(\d{1,4})")
 
 def parse_tv_filename(filename):
@@ -232,75 +239,99 @@ def save_existing_media_cache(existing_files):
         json.dump(list(existing_files), file, indent=4)
     logging.debug(f"Saved existing media cache with {len(existing_files)} entries")
 
-def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, existing_media):
-    for entry in tqdm(vod_entries, desc="Creating STRM files", unit="entry"):
-        title = entry["title"]
-        url = entry["url"]
-        category = entry["category"]
-        if title in cache and cache[title] == url:
-            logging.debug(f"Skipping (cached): {title}")
-            continue
-        if category == "tvshow":
-            details = extract_tv_details(title)
-            if not details or details[0] is None:
-                logging.debug(f"Skipping TV entry without valid pattern: {title}")
-                continue
-            show_name, season, episode_str = details
-            base_filename = episode_str
-            parsed = parse_tv_filename(base_filename)
-            if parsed is None or None in parsed:
-                logging.debug(f"Skipping TV entry (unable to parse base filename): {title}")
-                continue
-            normalized_tuple = (parsed[0], parsed[1], parsed[2])
-            normalized_str = " ".join(tuple(str(x) for x in normalized_tuple))
-            if normalized_str in existing_media:
-                logging.debug(f"TV episode already exists for '{base_filename}'. Skipping .strm creation.")
-                continue
-            target_folder = os.path.join(tvshows_dir, show_name, season)
-            os.makedirs(target_folder, exist_ok=True)
-            strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
-        elif category == "documentary":
-            doc_name, year = extract_movie_details(title)
-            base_filename = f"{doc_name} ({year})" if year else doc_name
+def get_recommended_max_workers():
+    arch = platform.machine()
+    cpu_count = os.cpu_count() or 1
+    if psutil:
+        total_mem_gb = psutil.virtual_memory().total / (1024 ** 3)
+    else:
+        total_mem_gb = 4
+    recommended = min(max(1, int(total_mem_gb / 0.5)), cpu_count * 2)
+    logging.info(f"System architecture: {arch}, CPU cores: {cpu_count}, Memory: {total_mem_gb:.2f}GB, recommended parallel writes: {recommended}")
+    return recommended
+
+def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_RUN):
+    title = entry["title"]
+    url = entry["url"]
+    category = entry["category"]
+
+    if title in existing_media:
+        logging.debug(f"Skipping (exists): {title}")
+        return None
+
+    if category == "tvshow":
+        details = extract_tv_details(title)
+        if not details or details[0] is None:
+            logging.debug(f"Skipping TV entry without valid pattern: {title}")
+            return None
+        show_name, season, episode_str = details
+        base_filename = episode_str
+        parsed = parse_tv_filename(base_filename)
+        if parsed is None or None in parsed:
+            logging.debug(f"Skipping TV entry (unable to parse base filename): {title}")
+            return None
+        normalized_tuple = (parsed[0], parsed[1], parsed[2])
+        normalized_str = " ".join(str(x) for x in normalized_tuple)
+        if normalized_str in existing_media:
+            logging.debug(f"TV episode already exists for '{base_filename}'. Skipping .strm creation.")
+            return None
+        target_folder = os.path.join(tvshows_dir, show_name, season)
+        os.makedirs(target_folder, exist_ok=True)
+        strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
+    elif category == "documentary":
+        doc_name, year = extract_movie_details(title)
+        base_filename = f"{doc_name} ({year})" if year else doc_name
+        if base_filename.lower() in existing_media:
+            logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
+            return None
+        target_folder = os.path.join(docs_dir, f"{doc_name} ({year})" if year else doc_name)
+        os.makedirs(target_folder, exist_ok=True)
+        strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
+    else:
+        movie_name, year = extract_movie_details(title)
+        genres = get_movie_genres(movie_name, year)
+        if "Documentary" in genres:
+            category = "documentary"
+            base_filename = f"{movie_name} ({year})" if year else movie_name
             if base_filename.lower() in existing_media:
                 logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
-                continue
-            target_folder = os.path.join(docs_dir, f"{doc_name} ({year})" if year else doc_name)
+                return None
+            target_folder = os.path.join(docs_dir, f"{movie_name} ({year})" if year else movie_name)
             os.makedirs(target_folder, exist_ok=True)
             strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
         else:
-            movie_name, year = extract_movie_details(title)
-            genres = get_movie_genres(movie_name, year)
-            if "Documentary" in genres:
-                category = "documentary"
-                base_filename = f"{movie_name} ({year})" if year else movie_name
-                if base_filename.lower() in existing_media:
-                    logging.debug(f"Documentary '{base_filename}' already exists. Skipping .strm creation.")
-                    continue
-                target_folder = os.path.join(docs_dir, f"{movie_name} ({year})" if year else movie_name)
-                os.makedirs(target_folder, exist_ok=True)
-                strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
-            else:
-                base_filename = f"{movie_name} ({year})" if year else movie_name
-                if base_filename.lower() in existing_media:
-                    logging.debug(f"Movie '{base_filename}' already exists. Skipping .strm creation.")
-                    continue
-                target_folder = os.path.join(movies_dir, f"{movie_name} ({year})" if year else movie_name)
-                os.makedirs(target_folder, exist_ok=True)
-                strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
-        if base_filename.lower() in existing_media:
-            logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
-            continue
-        if DRY_RUN:
-            logging.info(f"[DRY RUN] Would create: {strm_file_path} with URL: {url}")
-        else:
-            try:
-                with open(strm_file_path, "w", encoding="utf-8") as strm_file:
-                    strm_file.write(url + "\n")
-                logging.debug(f"Created: {strm_file_path}")
+            base_filename = f"{movie_name} ({year})" if year else movie_name
+            if base_filename.lower() in existing_media:
+                logging.debug(f"Movie '{base_filename}' already exists. Skipping .strm creation.")
+                return None
+            target_folder = os.path.join(movies_dir, f"{movie_name} ({year})" if year else movie_name)
+            os.makedirs(target_folder, exist_ok=True)
+            strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
+    if base_filename.lower() in existing_media:
+        logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
+        return None
+    if DRY_RUN:
+        logging.info(f"[DRY RUN] Would create: {strm_file_path} with URL: {url}")
+        return (title, url)
+    else:
+        try:
+            with open(strm_file_path, "w", encoding="utf-8") as strm_file:
+                strm_file.write(url + "\n")
+            logging.debug(f"Created: {strm_file_path}")
+            return (title, url)
+        except Exception as e:
+            logging.error(f"Failed to create {strm_file_path}: {e}")
+            return None
+
+def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, existing_media, DRY_RUN, max_workers):
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(process_entry, entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_RUN): entry 
+                   for entry in vod_entries}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Creating STRM files", unit="entry"):
+            result = future.result()
+            if result:
+                title, url = result
                 cache[title] = url
-            except Exception as e:
-                logging.error(f"Failed to create {strm_file_path}: {e}")
 
 def main():
     logging.info("Starting M3U to STRM conversion for Movies, TV Shows, and Documentaries...")
@@ -313,7 +344,11 @@ def main():
         logging.info(f"Initialized existing media cache with {len(existing_media)} entries")
     vod_entries = parse_m3u(M3U)
     if vod_entries:
-        create_strm_files(vod_entries, MOVIES_DIR, TVSHOWS_DIR, DOCS_DIR, cache, existing_media)
+        recommended_workers = get_recommended_max_workers()
+        configured_workers = config.get("max_workers", recommended_workers)
+        final_max_workers = min(configured_workers, recommended_workers)
+        logging.info(f"Using {final_max_workers} worker threads for file creation (configured: {configured_workers}, recommended: {recommended_workers})")
+        create_strm_files(vod_entries, MOVIES_DIR, TVSHOWS_DIR, DOCS_DIR, cache, existing_media, DRY_RUN, final_max_workers)
     else:
         logging.warning("No entries found in the M3U file.")
     save_cache(cache)
