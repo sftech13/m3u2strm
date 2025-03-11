@@ -8,10 +8,10 @@ import aiohttp
 import aiofiles
 import platform
 import unicodedata
+import shutil
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Try to import psutil to get memory information; fallback if not available.
 try:
     import psutil
 except ImportError:
@@ -70,7 +70,6 @@ def strip_after_year(text):
 def remove_imdb_id(title):
     return re.sub(r"[\{\(]?\btt\d+\b[\}\)]?", "", title, flags=re.IGNORECASE)
 
-
 def sanitize_title(title):
     title = title.strip()
     title = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').decode('ascii')
@@ -78,7 +77,6 @@ def sanitize_title(title):
     title = re.sub(r"[^\w\s\(\)-]", "", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title
-
 
 # Updated pattern for TV shows: gli alieni sono tra noi S01 E05
 tv_pattern = re.compile(r"(?i)S(?:eason)?\s*(\d{1,4})\s*E(?:pisode)?\s*(\d{1,4})")
@@ -271,7 +269,7 @@ def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_
         ignore_list = config.get("ignore_keywords", {}).get("tvshows", [])
     else:
         ignore_list = config.get("ignore_keywords", {}).get("movies", [])
-    
+
     if should_ignore_title(title, ignore_list):
         logging.info(f"Skipping '{title}' due to ignore keywords")
         return None
@@ -335,13 +333,13 @@ def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_
 
     if DRY_RUN:
         logging.info(f"[DRY RUN] Would create: {strm_file_path} with URL: {url}")
-        return (title, url)
+        return (title, url, strm_file_path)
     else:
         try:
             with open(strm_file_path, "w", encoding="utf-8") as strm_file:
                 strm_file.write(url + "\n")
             logging.debug(f"Created: {strm_file_path}")
-            return (title, url)
+            return (title, url, strm_file_path)
         except Exception as e:
             logging.error(f"Failed to create {strm_file_path}: {e}")
             return None
@@ -353,18 +351,43 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
         for future in tqdm(as_completed(futures), total=len(futures), desc="Creating STRM files", unit="entry"):
             result = future.result()
             if result:
-                title, url = result
-                cache[title] = url
+                title, url, strm_file_path = result
+                cache[title] = {"url": url, "path": strm_file_path}
+
+def cleanup_removed_entries_from_cache(cache, current_entries):
+    current_titles = {entry["title"] for entry in current_entries}
+    titles_to_remove = [title for title in cache.keys() if title not in current_titles]
+    
+    for title in titles_to_remove:
+        strm_file_path = cache[title].get("path")
+        if strm_file_path and os.path.exists(strm_file_path):
+            try:
+                os.remove(strm_file_path)
+                logging.debug(f"Removed outdated .strm file for title: {title}")
+            except Exception as e:
+                logging.error(f"Error removing file {strm_file_path}: {e}")
+        
+        parent_dir = os.path.dirname(strm_file_path)
+        if os.path.exists(parent_dir):
+            try:
+                shutil.rmtree(parent_dir)
+                logging.debug(f"Removed directory and all its contents: {parent_dir}")
+            except Exception as e:
+                logging.error(f"Error removing directory {parent_dir}: {e}")
+
+        del cache[title]
 
 def main():
     logging.info("Starting M3U to STRM conversion for Movies, TV Shows, and Documentaries...")
-    cache = load_cache()
+    cache = load_cache() 
+    
     combined_existing = build_all_caches(EXISTING_MEDIA_DIR)
     existing_media = load_existing_media_cache()
     if not existing_media:
         existing_media = combined_existing
         save_existing_media_cache(existing_media)
         logging.info(f"Initialized existing media cache with {len(existing_media)} entries")
+    
     vod_entries = parse_m3u(M3U)
     if vod_entries:
         recommended_workers = get_recommended_max_workers()
@@ -374,8 +397,15 @@ def main():
         create_strm_files(vod_entries, MOVIES_DIR, TVSHOWS_DIR, DOCS_DIR, cache, existing_media, DRY_RUN, final_max_workers)
     else:
         logging.warning("No entries found in the M3U file.")
+
     save_cache(cache)
     logging.info("All .strm files have been created successfully for Emby.")
+
+    logging.info("Starting cleanup of outdated .strm files based on the cache...")
+    cleanup_removed_entries_from_cache(cache, vod_entries)
+    
+    save_cache(cache)
+    logging.info("Cleanup completed.")
 
 if __name__ == "__main__":
     main()
