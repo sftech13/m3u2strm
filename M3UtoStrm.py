@@ -17,11 +17,15 @@ try:
 except ImportError:
     psutil = None
 
-def load_config(config_file="config.json"):
+def load_config():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_file = os.path.join(script_dir, "config.json")
     with open(config_file, "r", encoding="utf-8") as file:
         return json.load(file)
 
 config = load_config()
+
+
 M3U = config["m3u"]
 CACHE_FILE = config["cache_file"]
 LOG_FILE = config["log_file"]
@@ -42,7 +46,7 @@ os.makedirs(MOVIES_DIR, exist_ok=True)
 os.makedirs(TVSHOWS_DIR, exist_ok=True)
 os.makedirs(DOCS_DIR, exist_ok=True)
 
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
+logging.basicConfig(filename=LOG_FILE, level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
@@ -356,26 +360,25 @@ def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, exi
 
 def cleanup_removed_entries_from_cache(cache, current_entries):
     current_titles = {entry["title"] for entry in current_entries}
-    titles_to_remove = [title for title in cache.keys() if title not in current_titles]
+    titles_to_remove = [title for title in list(cache.keys()) if title not in current_titles]
     
     for title in titles_to_remove:
-        strm_file_path = cache[title].get("path")
-        if strm_file_path and os.path.exists(strm_file_path):
-            try:
-                os.remove(strm_file_path)
-                logging.debug(f"Removed outdated .strm file for title: {title}")
-            except Exception as e:
-                logging.error(f"Error removing file {strm_file_path}: {e}")
+        entry_val = cache[title]
+        if not isinstance(entry_val, dict):
+            logging.warning(f"Skipping '{title}' as its cache entry is in an unexpected format.")
+            continue
         
-        parent_dir = os.path.dirname(strm_file_path)
-        if os.path.exists(parent_dir):
-            try:
-                shutil.rmtree(parent_dir)
-                logging.debug(f"Removed directory and all its contents: {parent_dir}")
-            except Exception as e:
-                logging.error(f"Error removing directory {parent_dir}: {e}")
-
+        strm_file_path = entry_val.get("path")
+        if strm_file_path:
+            parent_dir = os.path.dirname(strm_file_path)
+            if os.path.exists(parent_dir):
+                try:
+                    shutil.rmtree(parent_dir)
+                    logging.info(f"Removed directory and all its contents: {parent_dir}")
+                except Exception as e:
+                    logging.error(f"Error removing directory {parent_dir}: {e}")
         del cache[title]
+
 
 def main():
     logging.info("Starting M3U to STRM conversion for Movies, TV Shows, and Documentaries...")
