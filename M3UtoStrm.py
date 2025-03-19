@@ -25,7 +25,6 @@ def load_config():
 
 config = load_config()
 
-
 M3U = config["m3u"]
 CACHE_FILE = config["cache_file"]
 LOG_FILE = config["log_file"]
@@ -37,7 +36,6 @@ TV_GROUP_KEYWORDS = config["tv_group_keywords"]
 DOC_GROUP_KEYWORDS = config["doc_group_keywords"]
 MOVIE_GROUP_KEYWORDS = config["movie_group_keywords"]
 DRY_RUN = config.get("dry_run", False)
-#MAX_WORKERS = config.get("max_workers", 5)
 
 MOVIES_DIR = os.path.join(OUTPUT_DIR, "Movies")
 TVSHOWS_DIR = os.path.join(OUTPUT_DIR, "TV Shows")
@@ -46,8 +44,12 @@ os.makedirs(MOVIES_DIR, exist_ok=True)
 os.makedirs(TVSHOWS_DIR, exist_ok=True)
 os.makedirs(DOCS_DIR, exist_ok=True)
 
-logging.basicConfig(filename=LOG_FILE, level=logging.WARNING,
-    format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -74,6 +76,9 @@ def strip_after_year(text):
 def remove_imdb_id(title):
     return re.sub(r"[\{\(]?\btt\d+\b[\}\)]?", "", title, flags=re.IGNORECASE)
 
+def tv_key(show_name, season_num, episode_num):
+    return f"{sanitize_title(show_name).lower()} s{season_num.zfill(2)} e{episode_num.zfill(2)}"
+
 def sanitize_title(title):
     title = title.strip()
     title = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').decode('ascii')
@@ -82,7 +87,6 @@ def sanitize_title(title):
     title = re.sub(r"\s+", " ", title).strip()
     return title
 
-# Updated pattern for TV shows: gli alieni sono tra noi S01 E05
 tv_pattern = re.compile(r"(?i)S(?:eason)?\s*(\d{1,4})\s*E(?:pisode)?\s*(\d{1,4})")
 
 def parse_tv_filename(filename):
@@ -212,18 +216,22 @@ def build_existing_media_cache(directory):
                 if ext.lower() in video_extensions:
                     if "tv shows" in root.lower():
                         parsed_val = parse_tv_filename(name)
-                    else:
-                        parsed_val = sanitize_title(strip_after_year(name)).lower()
-                    if parsed_val is not None:
-                        if isinstance(parsed_val, tuple):
-                            if None in parsed_val:
+                        if parsed_val is not None:
+                            show_name, season_num, episode_num = parsed_val
+                            if show_name and season_num and episode_num:
+                                show_name = sanitize_title(show_name).lower()
+                                normalized = f"{show_name} s{season_num} e{episode_num}"
+                            else:
                                 pbar.update(1)
                                 continue
-                            normalized = " ".join(parsed_val)
                         else:
-                            normalized = parsed_val
-                        existing_files.add(normalized.lower())
-                        logging.debug(f"Found file in {root}: {normalized.lower()}")
+                            pbar.update(1)
+                            continue
+                    else:
+                        raw_title = sanitize_title(strip_after_year(name)).lower()
+                        normalized = raw_title
+                    existing_files.add(normalized.lower())
+                    logging.debug(f"Found file in {root}: {normalized.lower()}")
                     pbar.update(1)
     logging.info(f"Built cache with {len(existing_files)} entries from {directory}")
     return existing_files
@@ -264,43 +272,39 @@ def should_ignore_title(title, ignore_list):
             return True
     return False
 
-def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_RUN):
+def process_entry(entry, movies_dir, tvshows_dir, docs_dir, cache, existing_media, DRY_RUN):
     title = entry["title"]
     url = entry["url"]
     category = entry["category"]
-
     if category == "tvshow":
         ignore_list = config.get("ignore_keywords", {}).get("tvshows", [])
     else:
         ignore_list = config.get("ignore_keywords", {}).get("movies", [])
-
     if should_ignore_title(title, ignore_list):
         logging.info(f"Skipping '{title}' due to ignore keywords")
         return None
-
     if title in existing_media:
         logging.debug(f"Skipping (exists): {title}")
         return None
-
     if category == "tvshow":
         details = extract_tv_details(title)
         if not details or details[0] is None:
             logging.debug(f"Skipping TV entry without valid pattern: {title}")
             return None
-        show_name, season, episode_str = details
-        base_filename = episode_str
-        parsed = parse_tv_filename(base_filename)
+        show_name, season_label, episode_str = details
+        parsed = parse_tv_filename(episode_str)
         if parsed is None or None in parsed:
             logging.debug(f"Skipping TV entry (unable to parse base filename): {title}")
             return None
-        normalized_tuple = (parsed[0], parsed[1], parsed[2])
-        normalized_str = " ".join(str(x) for x in normalized_tuple)
+        parsed_show_name, season_num, episode_num = parsed
+        parsed_show_name = sanitize_title(parsed_show_name).lower()
+        normalized_str = f"{parsed_show_name} s{season_num} e{episode_num}"
         if normalized_str in existing_media:
-            logging.debug(f"TV episode already exists for '{base_filename}'. Skipping .strm creation.")
+            logging.debug(f"TV episode already exists for '{episode_str}'. Skipping .strm creation.")
             return None
-        target_folder = os.path.join(tvshows_dir, show_name, season)
+        target_folder = os.path.join(tvshows_dir, show_name, season_label)
         os.makedirs(target_folder, exist_ok=True)
-        strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
+        strm_file_path = os.path.join(target_folder, f"{episode_str}.strm")
     elif category == "documentary":
         doc_name, year = extract_movie_details(title)
         base_filename = f"{doc_name} ({year})" if year else doc_name
@@ -330,11 +334,10 @@ def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_
             target_folder = os.path.join(movies_dir, f"{movie_name} ({year})" if year else movie_name)
             os.makedirs(target_folder, exist_ok=True)
             strm_file_path = os.path.join(target_folder, f"{base_filename}.strm")
-            
-    if base_filename.lower() in existing_media:
-        logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
-        return None
-
+    if category != "tvshow":
+        if base_filename.lower() in existing_media:
+            logging.debug(f"Media file exists for '{base_filename}' (in cache). Skipping .strm creation.")
+            return None
     if DRY_RUN:
         logging.info(f"[DRY RUN] Would create: {strm_file_path} with URL: {url}")
         return (title, url, strm_file_path)
@@ -350,47 +353,121 @@ def process_entry(entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_
 
 def create_strm_files(vod_entries, movies_dir, tvshows_dir, docs_dir, cache, existing_media, DRY_RUN, max_workers):
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_entry, entry, movies_dir, tvshows_dir, docs_dir, existing_media, DRY_RUN): entry 
-                   for entry in vod_entries}
+        futures = {
+            executor.submit(
+                process_entry,
+                entry,
+                movies_dir,
+                tvshows_dir,
+                docs_dir,
+                cache,
+                existing_media,
+                DRY_RUN
+            ): entry
+            for entry in vod_entries
+        }
         for future in tqdm(as_completed(futures), total=len(futures), desc="Creating STRM files", unit="entry"):
             result = future.result()
             if result:
                 title, url, strm_file_path = result
                 cache[title] = {"url": url, "path": strm_file_path}
 
+def normalize_title_for_cleanup(title):
+    parsed = parse_tv_filename(title)
+    if parsed is not None and None not in parsed:
+        show_name, season_num, episode_num = parsed
+        return f"{sanitize_title(show_name).lower()} s{season_num} e{episode_num}"
+    else:
+        return sanitize_title(strip_after_year(title)).lower()
+
 def cleanup_removed_entries_from_cache(cache, current_entries):
-    current_titles = {entry["title"] for entry in current_entries}
-    titles_to_remove = [title for title in list(cache.keys()) if title not in current_titles]
-    
+    current_titles = {normalize_title_for_cleanup(entry["title"]) for entry in current_entries}
+    titles_to_remove = []
+    for title in list(cache.keys()):
+        normalized_key = normalize_title_for_cleanup(title)
+        if normalized_key not in current_titles:
+            entry_val = cache[title]
+            if not isinstance(entry_val, dict):
+                logging.warning(f"Skipping '{title}' as its cache entry is in an unexpected format.")
+                continue
+            strm_file_path = entry_val.get("path")
+            if strm_file_path:
+                parent_dir = os.path.dirname(strm_file_path)
+                if os.path.exists(parent_dir):
+                    try:
+                        shutil.rmtree(parent_dir)
+                        logging.debug(f"Removed directory and all its contents: {parent_dir}")
+                    except Exception as e:
+                        logging.error(f"Error removing directory {parent_dir}: {e}")
+            titles_to_remove.append(title)
     for title in titles_to_remove:
-        entry_val = cache[title]
-        if not isinstance(entry_val, dict):
-            logging.warning(f"Skipping '{title}' as its cache entry is in an unexpected format.")
-            continue
-        
-        strm_file_path = entry_val.get("path")
-        if strm_file_path:
-            parent_dir = os.path.dirname(strm_file_path)
-            if os.path.exists(parent_dir):
-                try:
-                    shutil.rmtree(parent_dir)
-                    logging.info(f"Removed directory and all its contents: {parent_dir}")
-                except Exception as e:
-                    logging.error(f"Error removing directory {parent_dir}: {e}")
         del cache[title]
 
+def folder_contains_strm(directory):
+    for root, dirs, files in os.walk(directory):
+        if any(f.lower().endswith('.strm') for f in files):
+            return True
+    return False
+
+def cleanup_empty_or_invalid_folders(root_directory):
+    for dirpath, dirnames, filenames in os.walk(root_directory, topdown=False):
+        if os.path.abspath(dirpath) == os.path.abspath(root_directory):
+            continue
+        if not folder_contains_strm(dirpath):
+            try:
+                shutil.rmtree(dirpath)
+                logging.debug(f"Removed folder without .strm files: {dirpath}")
+            except Exception as e:
+                logging.error(f"Error removing folder {dirpath}: {e}")
+
+def cleanup_strm_files_when_media_exists(cache, existing_media):
+    titles_to_remove = []
+    for title, entry in list(cache.items()):
+        normalized_key = None
+        parsed = parse_tv_filename(title)
+        if parsed is not None and None not in parsed:
+            show_name, season_num, episode_num = parsed
+            normalized_key = f"{sanitize_title(show_name).lower()} s{season_num.zfill(2)} e{episode_num.zfill(2)}"
+        else:
+            normalized_key = sanitize_title(strip_after_year(title)).lower()
+        logging.debug(f"Checking cache entry '{title}' with normalized key '{normalized_key}'")
+        if normalized_key in existing_media:
+            strm_file_path = entry.get("path")
+            if strm_file_path and os.path.exists(strm_file_path):
+                try:
+                    os.remove(strm_file_path)
+                    logging.debug(f"Removed .strm file for '{title}' as actual media exists: {strm_file_path}")
+                except Exception as e:
+                    logging.error(f"Error removing .strm file {strm_file_path}: {e}")
+            titles_to_remove.append(title)
+    for title in titles_to_remove:
+        del cache[title]
+
+def cleanup_strm_files_by_scan(root_dir, existing_media):
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        for filename in filenames:
+            if filename.lower().endswith('.strm'):
+                full_path = os.path.join(dirpath, filename)
+                base = os.path.splitext(filename)[0]
+                parsed = parse_tv_filename(base)
+                if parsed is not None and None not in parsed:
+                    norm = tv_key(*parsed)
+                else:
+                    norm = sanitize_title(strip_after_year(base)).lower()
+                if norm in existing_media:
+                    try:
+                        os.remove(full_path)
+                        logging.debug(f"Removed .strm file by scan: {full_path}")
+                    except Exception as e:
+                        logging.error(f"Error removing .strm file {full_path}: {e}")
 
 def main():
     logging.info("Starting M3U to STRM conversion for Movies, TV Shows, and Documentaries...")
-    cache = load_cache() 
-    
+    cache = load_cache()
     combined_existing = build_all_caches(EXISTING_MEDIA_DIR)
-    existing_media = load_existing_media_cache()
-    if not existing_media:
-        existing_media = combined_existing
-        save_existing_media_cache(existing_media)
-        logging.info(f"Initialized existing media cache with {len(existing_media)} entries")
-    
+    existing_media = load_existing_media_cache().union(combined_existing)
+    save_existing_media_cache(existing_media)
+    logging.info(f"Updated existing media cache with {len(existing_media)} entries")
     vod_entries = parse_m3u(M3U)
     if vod_entries:
         recommended_workers = get_recommended_max_workers()
@@ -400,13 +477,18 @@ def main():
         create_strm_files(vod_entries, MOVIES_DIR, TVSHOWS_DIR, DOCS_DIR, cache, existing_media, DRY_RUN, final_max_workers)
     else:
         logging.warning("No entries found in the M3U file.")
-
     save_cache(cache)
     logging.info("All .strm files have been created successfully for Emby.")
-
     logging.info("Starting cleanup of outdated .strm files based on the cache...")
     cleanup_removed_entries_from_cache(cache, vod_entries)
-    
+    logging.info("Cleaning up .strm files as actual media is present...")
+    cleanup_strm_files_when_media_exists(cache, existing_media)
+    logging.info("Cleaning up .strm files by scanning directories...")
+    for directory in [MOVIES_DIR, TVSHOWS_DIR, DOCS_DIR]:
+        cleanup_strm_files_by_scan(directory, existing_media)
+    logging.info("Starting additional cleanup of folders without .strm files...")
+    for directory in [MOVIES_DIR, TVSHOWS_DIR, DOCS_DIR]:
+        cleanup_empty_or_invalid_folders(directory)
     save_cache(cache)
     logging.info("Cleanup completed.")
 
